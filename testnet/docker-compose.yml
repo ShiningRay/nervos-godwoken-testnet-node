@@ -1,6 +1,28 @@
 version: '3.8'
 
 services:
+  ckb:
+    image: nervos/ckb:v0.101.6
+    ports:
+      - 8114:8114
+      - 8115:8115
+    volumes:
+      - ./config/ckb.toml:/var/lib/ckb/ckb.toml
+      - ./config/ckb-miner.toml:/var/lib/ckb/ckb-miner.toml
+      - ./config/default.db-options:/var/lib/ckb/default.db-options
+      - ./data/ckb:/var/lib/ckb/data
+    command: run
+  indexer:
+    image: nervos/ckb-indexer
+    environment:
+      - RUST_LOG=info
+    ports:
+      - 8116:8116
+    volumes:
+      - ./data/indexer:/var/lib/ckb-indexer
+    command: -c http://ckb:8114 -s /var/lib/ckb-indexer -l 0.0.0.0:8116
+    links:
+      - ckb
   postgres:
     image: postgres:alpine
     environment:
@@ -8,39 +30,42 @@ services:
       POSTGRES_DB: lumos
       POSTGRES_PASSWORD: password
     volumes:
-      - ./data/cache/activity/postgres-data:/var/lib/postgresql/data
+      - ./data/postgres:/var/lib/postgresql/data
       - ./config/postgres_create_tables.sql:/docker-entrypoint-initdb.d/create_tables.sql
-
   redis:
     image: redis:bullseye
     user: redis:redis
     volumes:
-      - ./data/cache/activity/redis-data:/data
+      - ./data/redis:/data
 
   godwoken:
-    image: nervos/godwoken-prebuilds:v0.9.1-aot
+    image: nervos/godwoken-prebuilds:v0.10.2
     restart: always
     volumes:
-    - ./config/godwoken-readonly-config.toml:/deploy/config.toml
-    - ./config/block-producer-private-key.txt:/deploy/pk
-    - ./data/cache/activity/store.db:/store.db
+      - ./config/godwoken-readonly-config.toml:/deploy/config.toml
+      - ./config/block-producer-private-key.txt:/deploy/pk
+      - ./data/godwoken:/store.db
     environment:
       RUST_BACKTRACE: 1
+      RUST_BACKTRACE: full
+      BLOCKING_MAX_THREADS: 16
+      SMOL_THREADS: 12
     command: godwoken run -c /deploy/config.toml
     ports:
       - 8119:8119
     depends_on:
       - postgres
-
+      - ckb
+      - indexer
   web3:
-    image: nervos/godwoken-web3-prebuilds:v0.12.3
-    volumes: 
+    image: nervos/godwoken-web3-prebuilds:v0.13.4
+    volumes:
       - ./config/web3.env:/godwoken-web3/packages/api-server/.env
     working_dir: /godwoken-web3
     command: yarn workspace @godwoken-web3/api-server start
     ports:
       - 8024:8024
-    depends_on: 
+    depends_on:
       - redis
       - postgres
       - godwoken
